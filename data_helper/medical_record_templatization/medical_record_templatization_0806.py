@@ -8,6 +8,7 @@ import time
 import re
 import os
 import hashlib
+
 """
 正式版本，跑出来的数据为：Disease描述库_优化版_20250806_121343.xlsx
 
@@ -573,7 +574,7 @@ def main():
     DEPLOYMENT_NAME = "o3"
 
     # 输入文件路径
-    input_file = "../data/case_data/病历数据_可使用_20250804_172720.xlsx"
+    input_file = "../../data/case_data/病历数据_可使用_20250804_172720.xlsx"
 
     # 测试配置
     MAX_DISEASES = None  # 改为None可处理全部Disease
