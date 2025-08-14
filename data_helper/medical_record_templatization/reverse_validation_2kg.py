@@ -12,6 +12,7 @@ from tqdm import tqdm
 from difflib import SequenceMatcher
 import re
 import threading
+
 """
 根据《诊疗规范》再跑一版反正验证的结果，这一版没有置信度，要给出不通过的理由。
 
