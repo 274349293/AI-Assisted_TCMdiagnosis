@@ -1,2 +1,7 @@
 /data/
 /data_helper/medical_record_templatization/cache/
+
+.env
+*.env
+config_local.py
+
