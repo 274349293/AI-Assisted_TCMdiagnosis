@@ -1,4 +1,13 @@
-import json
+# 打印总结
+for step, stats in summary["步骤结果"].items():
+    if step == "step1":
+        logger.info(f"{step.upper()} 统计: 总数={stats['总记录数']}, "
+                    f"通过={stats['通过数']}, 失败={stats['失败数']}, "
+                    f"通过率={stats['通过率']}")
+    # elif step == "step2":
+    #     logger.info(f"{step.upper()} 统计: 总数={stats['总记录数']}, "
+    #                f"有冲突={stats['有冲突数']}, 无冲突={stats['无冲突数']}, "
+    #                fimport json
 import logging
 import os
 from datetime import datetime
@@ -99,7 +108,7 @@ class ContentValidationPipeline:
         logger.info("Step2: 待实现")
         logger.info("=" * 80)
 
-        # TODO: 实现Step2逻辑
+        # TODO: 实现新的Step2逻辑
         pass
 
     def run_step3(self) -> List[Dict[str, Any]]:
@@ -126,16 +135,30 @@ class ContentValidationPipeline:
             return
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = os.path.join(
+
+        # 保存带时间戳的文件
+        timestamped_file = os.path.join(
             self.config["output_dir"],
             f"{step_name}_results_{timestamp}.json"
         )
 
+        # 保存固定文件名的文件（最新版本）
+        latest_file = os.path.join(
+            self.config["output_dir"],
+            f"{step_name}_results_latest.json"
+        )
+
         try:
-            with open(output_file, 'w', encoding='utf-8') as f:
+            # 保存带时间戳的版本
+            with open(timestamped_file, 'w', encoding='utf-8') as f:
                 json.dump(results, f, ensure_ascii=False, indent=2)
 
-            logger.info(f"{step_name} 结果已保存到: {output_file}")
+            # 保存最新版本
+            with open(latest_file, 'w', encoding='utf-8') as f:
+                json.dump(results, f, ensure_ascii=False, indent=2)
+
+            logger.info(f"{step_name} 结果已保存到: {timestamped_file}")
+            logger.info(f"{step_name} 最新版本已保存到: {latest_file}")
 
             # 同时保存一份可读性更好的Excel文件
             self._save_to_excel(step_name, results, timestamp)
@@ -163,18 +186,26 @@ class ContentValidationPipeline:
                     '记录编号': result.get('记录编号', ''),
                     '源文件': result.get('源文件', ''),
                     '姓名': result.get('原始数据', {}).get('姓名', ''),
+                    '就诊日期': result.get('原始数据', {}).get('就诊日期', ''),
                     '诊断': result.get('原始数据', {}).get('诊断', ''),
-                    '中医疾病': ', '.join(result.get('诊断分类', {}).get('中医疾病', [])),
-                    '中医证型': ', '.join(result.get('诊断分类', {}).get('中医证型', [])),
-                    '西医诊断': ', '.join(result.get('诊断分类', {}).get('西医诊断', [])),
-                    '未匹配项': ', '.join(result.get('诊断分类', {}).get('未匹配项', [])),
-                    '是否符合要求': result.get('step1验证结果', {}).get('是否符合要求', ''),
-                    '不符合原因': result.get('step1验证结果', {}).get('不符合原因', '')
+                    '治疗': result.get('原始数据', {}).get('治疗', ''),
                 }
+
+                # Step1结果
+                if 'step1验证结果' in result:
+                    step1_result = result['step1验证结果']
+                    row.update({
+                        'Step1_是否符合要求': step1_result.get('是否符合要求', ''),
+                        'Step1_不符合原因': step1_result.get('不符合原因', ''),
+                        '中医疾病': ', '.join(result.get('诊断分类', {}).get('中医疾病', [])),
+                        '中医证型': ', '.join(result.get('诊断分类', {}).get('中医证型', [])),
+                        '西医诊断': ', '.join(result.get('诊断分类', {}).get('西医诊断', [])),
+                        '未匹配项': ', '.join(result.get('诊断分类', {}).get('未匹配项', [])),
+                    })
 
                 # 添加其他原始数据字段
                 for key, value in result.get('原始数据', {}).items():
-                    if key not in ['姓名', '诊断']:
+                    if key not in ['姓名', '就诊日期', '诊断', '治疗']:
                         row[f'原始_{key}'] = value
 
                 flattened_data.append(row)
@@ -220,6 +251,13 @@ class ContentValidationPipeline:
                 "通过率": f"{passed / total * 100:.1f}%" if total > 0 else "0%"
             }
 
+        # Step2统计 - 待实现
+        # if "step2" in self.results:
+        #     step2_data = self.results["step2"]
+        #     total = len(step2_data)
+        #     ...
+        #     summary["步骤结果"]["step2"] = {...}
+
         # 保存总结报告
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         summary_file = os.path.join(
@@ -234,9 +272,14 @@ class ContentValidationPipeline:
 
         # 打印总结
         for step, stats in summary["步骤结果"].items():
-            logger.info(f"{step.upper()} 统计: 总数={stats['总记录数']}, "
-                        f"通过={stats['通过数']}, 失败={stats['失败数']}, "
-                        f"通过率={stats['通过率']}")
+            if step == "step1":
+                logger.info(f"{step.upper()} 统计: 总数={stats['总记录数']}, "
+                            f"通过={stats['通过数']}, 失败={stats['失败数']}, "
+                            f"通过率={stats['通过率']}")
+            # elif step == "step2":
+            #     logger.info(f"{step.upper()} 统计: 总数={stats['总记录数']}, "
+            #                f"有冲突={stats['有冲突数']}, 无冲突={stats['无冲突数']}, "
+            #                f"冲突率={stats['冲突率']}")
 
     def run_all_steps(self):
         """运行所有验证步骤"""
@@ -252,7 +295,7 @@ class ContentValidationPipeline:
             step1_results = self.run_step1()
             self.save_results("step1", step1_results)
 
-            # TODO: 添加更多步骤
+            # TODO: 添加新的步骤
             # step2_results = self.run_step2()
             # self.save_results("step2", step2_results)
 
@@ -278,9 +321,13 @@ def create_sample_config():
             "../../data/case_data/xishi2025.xlsx",
             "../../data/case_data/youyang2025.xlsx"
         ],
-        "门诊疾病目录": "../../data/other/disease_v1.json",
+        "门诊疾病目录": "../../data/other/disease.json",
         "中医疾病-证型": "../../data/other/disease_to_syndromes_merged.completed.json",
-        "output_dir": "../../data/result/"
+        "output_dir": "../../data/result/",
+        "treatment_validation_files": [
+            "../../data/case_data/xishi2025.xlsx",
+            "../../data/case_data/youyang2025.xlsx"
+        ]
     }
 
     config_file = "config.json"
