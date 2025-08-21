@@ -1,13 +1,4 @@
-# 打印总结
-for step, stats in summary["步骤结果"].items():
-    if step == "step1":
-        logger.info(f"{step.upper()} 统计: 总数={stats['总记录数']}, "
-                    f"通过={stats['通过数']}, 失败={stats['失败数']}, "
-                    f"通过率={stats['通过率']}")
-    # elif step == "step2":
-    #     logger.info(f"{step.upper()} 统计: 总数={stats['总记录数']}, "
-    #                f"有冲突={stats['有冲突数']}, 无冲突={stats['无冲突数']}, "
-    #                fimport json
+import json
 import logging
 import os
 from datetime import datetime
@@ -15,6 +6,7 @@ from typing import List, Dict, Any
 
 # 导入各个步骤的验证模块
 from step1_disease_validation import run_step1_validation
+from step2_llm_validation import run_step2_validation
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -65,9 +57,15 @@ class ContentValidationPipeline:
                 return False
 
         # 检查依赖文件是否存在
-        for file_key in ["门诊疾病目录", "中医疾病-证型"]:
-            file_path = self.config[file_key]
-            if not os.path.exists(file_path):
+        check_files = {
+            "门诊疾病目录": self.config.get("门诊疾病目录"),
+            "中医疾病-证型": self.config.get("中医疾病-证型"),
+            "知识库文件": self.config.get("知识库文件"),
+            "门诊疾病->知识库疾病映射": self.config.get("门诊疾病->知识库疾病映射")
+        }
+
+        for file_key, file_path in check_files.items():
+            if file_path and not os.path.exists(file_path):
                 logger.error(f"依赖文件不存在 ({file_key}): {file_path}")
                 return False
 
@@ -100,16 +98,30 @@ class ContentValidationPipeline:
             logger.error(f"Step1执行失败: {str(e)}")
             raise
 
-    def run_step2(self) -> List[Dict[str, Any]]:
+    def run_step2(self, step1_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        执行Step2: 待实现
+        执行Step2: LLM医疗描述合理性验证
+
+        Args:
+            step1_results: step1验证结果
+
+        Returns:
+            Step2验证结果
         """
         logger.info("=" * 80)
-        logger.info("Step2: 待实现")
+        logger.info("开始执行 Step2: LLM医疗描述合理性验证")
         logger.info("=" * 80)
 
-        # TODO: 实现新的Step2逻辑
-        pass
+        try:
+            step2_results = run_step2_validation(self.config, step1_results=step1_results)
+            self.results["step2"] = step2_results
+
+            logger.info("Step2执行完成")
+            return step2_results
+
+        except Exception as e:
+            logger.error(f"Step2执行失败: {str(e)}")
+            raise
 
     def run_step3(self) -> List[Dict[str, Any]]:
         """
@@ -182,31 +194,109 @@ class ContentValidationPipeline:
             flattened_data = []
 
             for result in results:
+                # 基础信息区
                 row = {
                     '记录编号': result.get('记录编号', ''),
                     '源文件': result.get('源文件', ''),
                     '姓名': result.get('原始数据', {}).get('姓名', ''),
                     '就诊日期': result.get('原始数据', {}).get('就诊日期', ''),
-                    '诊断': result.get('原始数据', {}).get('诊断', ''),
-                    '治疗': result.get('原始数据', {}).get('治疗', ''),
                 }
 
-                # Step1结果
+                # Step1验证区（疾病名称验证）
                 if 'step1验证结果' in result:
                     step1_result = result['step1验证结果']
                     row.update({
-                        'Step1_是否符合要求': step1_result.get('是否符合要求', ''),
-                        'Step1_不符合原因': step1_result.get('不符合原因', ''),
-                        '中医疾病': ', '.join(result.get('诊断分类', {}).get('中医疾病', [])),
-                        '中医证型': ', '.join(result.get('诊断分类', {}).get('中医证型', [])),
-                        '西医诊断': ', '.join(result.get('诊断分类', {}).get('西医诊断', [])),
-                        '未匹配项': ', '.join(result.get('诊断分类', {}).get('未匹配项', [])),
+                        '疾病名称验证_是否符合要求': step1_result.get('是否符合要求', ''),
+                        '疾病名称验证_不符合原因': step1_result.get('不符合原因', ''),
+                    })
+                else:
+                    row.update({
+                        '疾病名称验证_是否符合要求': '',
+                        '疾病名称验证_不符合原因': '',
                     })
 
-                # 添加其他原始数据字段
-                for key, value in result.get('原始数据', {}).items():
-                    if key not in ['姓名', '就诊日期', '诊断', '治疗']:
-                        row[f'原始_{key}'] = value
+                # Step2验证区
+                if 'step2验证结果' in result:
+                    step2_result = result['step2验证结果']
+
+                    # PE检查验证
+                    row.update({
+                        'PE检查合格': step2_result.get('PE检查是否合格', ''),
+                        'PE检查原因': step2_result.get('PE检查不合格原因', ''),
+                    })
+
+                    # 中医疾病验证汇总
+                    tcm_validation = step2_result.get('中医疾病验证结果', {})
+                    mapping_failures = step2_result.get('映射失败记录', [])
+
+                    # 构建验证汇总信息
+                    validation_summary = []
+                    main_issues = []
+
+                    # 处理映射失败
+                    if mapping_failures:
+                        failed_diseases = [item.get('原疾病', '') for item in mapping_failures]
+                        validation_summary.append(f"映射失败: {', '.join(failed_diseases)}")
+                        main_issues.append("存在疾病映射失败")
+
+                    # 处理成功验证的疾病
+                    for disease, validation in tcm_validation.items():
+                        disease_issues = []
+
+                        # 检查各字段验证结果
+                        fields = ['主诉验证', '现病史验证', '病机验证', '治则/处理验证']
+                        for field in fields:
+                            field_result = validation.get(field, {})
+                            if field_result.get('结果') == '不合理':
+                                field_name = field.replace('验证', '')
+                                reason = field_result.get('原因', '')
+                                disease_issues.append(f"{field_name}({reason})")
+
+                        if disease_issues:
+                            validation_summary.append(f"{disease}: {', '.join(disease_issues)}")
+                            main_issues.extend([f"{disease}_{issue}" for issue in disease_issues])
+                        else:
+                            validation_summary.append(f"{disease}: 验证通过")
+
+                    if not validation_summary:
+                        validation_summary = ["无中医疾病验证"]
+
+                    row.update({
+                        '中医疾病验证汇总': '; '.join(validation_summary),
+                        '验证主要问题': '; '.join(main_issues) if main_issues else '',
+                    })
+                else:
+                    row.update({
+                        'PE检查合格': '',
+                        'PE检查原因': '',
+                        '中医疾病验证汇总': '',
+                        '验证主要问题': '',
+                    })
+
+                # 原始病历区（保持原始字段名）
+                original_data = result.get('原始数据', {})
+                # 按重要性排序的字段
+                important_fields = ['诊断', '主诉', '现病史', 'PE/检查', 'PE/检查 （体现望闻问切）', '病机', '治则/处理']
+
+                # 先添加重要字段
+                for field in important_fields:
+                    if field in original_data:
+                        row[field] = original_data[field]
+
+                # 再添加其他字段
+                for key, value in original_data.items():
+                    if key not in important_fields and key not in ['姓名', '就诊日期']:
+                        row[key] = value
+
+                # 添加诊断分类信息（供参考）
+                if '诊断分类' in result:
+                    classification = result['诊断分类']
+                    row.update({
+                        '分类_中医疾病': ', '.join(classification.get('中医疾病', [])),
+                        '分类_中医证型': ', '.join(classification.get('中医证型', [])),
+                        '分类_西医诊断': ', '.join(classification.get('西医诊断', [])),
+                        '分类_未匹配项': ', '.join(classification.get('未匹配项', [])),
+                    })
 
                 flattened_data.append(row)
 
@@ -251,12 +341,20 @@ class ContentValidationPipeline:
                 "通过率": f"{passed / total * 100:.1f}%" if total > 0 else "0%"
             }
 
-        # Step2统计 - 待实现
-        # if "step2" in self.results:
-        #     step2_data = self.results["step2"]
-        #     total = len(step2_data)
-        #     ...
-        #     summary["步骤结果"]["step2"] = {...}
+        # Step2统计
+        if "step2" in self.results:
+            step2_data = self.results["step2"]
+            total = len(step2_data)
+            pe_passed = len([r for r in step2_data if r.get("step2验证结果", {}).get("PE检查是否合格", False)])
+            tcm_validated = len([r for r in step2_data if r.get("step2验证结果", {}).get("中医疾病验证结果", {})])
+
+            summary["步骤结果"]["step2"] = {
+                "总记录数": total,
+                "PE检查合格数": pe_passed,
+                "PE检查不合格数": total - pe_passed,
+                "包含中医疾病验证数": tcm_validated,
+                "PE检查合格率": f"{pe_passed / total * 100:.1f}%" if total > 0 else "0%"
+            }
 
         # 保存总结报告
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -276,10 +374,11 @@ class ContentValidationPipeline:
                 logger.info(f"{step.upper()} 统计: 总数={stats['总记录数']}, "
                             f"通过={stats['通过数']}, 失败={stats['失败数']}, "
                             f"通过率={stats['通过率']}")
-            # elif step == "step2":
-            #     logger.info(f"{step.upper()} 统计: 总数={stats['总记录数']}, "
-            #                f"有冲突={stats['有冲突数']}, 无冲突={stats['无冲突数']}, "
-            #                f"冲突率={stats['冲突率']}")
+            elif step == "step2":
+                logger.info(f"{step.upper()} 统计: 总数={stats['总记录数']}, "
+                            f"PE检查合格={stats['PE检查合格数']}, PE检查不合格={stats['PE检查不合格数']}, "
+                            f"PE检查合格率={stats['PE检查合格率']}, "
+                            f"包含中医疾病验证={stats['包含中医疾病验证数']}")
 
     def run_all_steps(self):
         """运行所有验证步骤"""
@@ -295,11 +394,12 @@ class ContentValidationPipeline:
             step1_results = self.run_step1()
             self.save_results("step1", step1_results)
 
-            # TODO: 添加新的步骤
-            # step2_results = self.run_step2()
-            # self.save_results("step2", step2_results)
+            # Step2: LLM医疗描述合理性验证
+            step2_results = self.run_step2(step1_results)
+            self.save_results("step2", step2_results)
 
-            # step3_results = self.run_step3()
+            # TODO: 添加更多步骤
+            # step3_results = self.run_step3(step2_results)
             # self.save_results("step3", step3_results)
 
             # 生成总结报告
@@ -327,7 +427,16 @@ def create_sample_config():
         "treatment_validation_files": [
             "../../data/case_data/xishi2025.xlsx",
             "../../data/case_data/youyang2025.xlsx"
-        ]
+        ],
+        "知识库文件": "../../data/other/book_structured_enhanced_cleaned_full.json",
+        "门诊疾病->知识库疾病映射": "../../data/other/Tcm_disease_mapping.json",
+        "pe_invalid_keywords": ["无", "暂无", "无异常", "-", "正常", "未见异常"],
+        "azure_openai": {
+            "api_key": "",
+            "endpoint": "",
+            "deployment_name": "o3",
+            "api_version": "2025-01-01-preview"
+        }
     }
 
     config_file = "config.json"
@@ -335,7 +444,7 @@ def create_sample_config():
         json.dump(sample_config, f, ensure_ascii=False, indent=2)
 
     logger.info(f"示例配置文件已创建: {config_file}")
-    logger.info("请根据实际情况修改配置文件中的路径")
+    logger.info("请根据实际情况修改配置文件中的路径和Azure OpenAI配置")
 
 
 def main():

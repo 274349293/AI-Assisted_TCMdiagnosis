@@ -1,13 +1,26 @@
 {
   "input_files": [
-    "../../data/case_data/0819+喜氏.xlsx",
     "../../data/case_data/0819+友杨.xlsx"
   ],
-  "门诊疾病目录": "../../data/other/disease.json",
+  "门诊疾病目录": "../../data/other/disease_v2.json",
   "中医疾病-证型": "../../data/other/disease_to_syndromes_merged.completed.json",
   "output_dir": "../../data/result/",
   "treatment_validation_files": [
     "../../data/case_data/0819+喜氏.xlsx",
     "../../data/case_data/0819+友杨.xlsx"
-  ]
+  ],
+  "知识库文件": "../../data/other/book_structured_enhanced_cleaned_full.json",
+  "门诊疾病->知识库疾病映射": "../../data/other/Tcm_disease_mapping.json",
+  "pe_invalid_keywords": [
+    "无",
+    "暂无",
+    "无异常",
+    "-"
+  ],
+  "azure_openai": {
+    "api_key": "",
+    "endpoint": "",
+    "deployment_name": "o3",
+    "api_version": "2025-01-01-preview"
+  }
 }
