@@ -105,8 +105,8 @@ class Step2LLMValidator:
 
         # 检查是否包含无效关键词
         for keyword in self.pe_invalid_keywords:
-            if keyword in content_str:
-                return False, f"PE/检查内容为'{content_str}'，包含无效关键词'{keyword}'"
+            if keyword == content_str:
+                return False, f"PE/检查内容为'{content_str}'，命中无效关键词'{keyword}'"
 
         return True, ""
 
@@ -211,7 +211,8 @@ class Step2LLMValidator:
                             "content": "你是一位资深的中医专家，精通中医理论和临床实践。请基于提供的标准知识库内容，客观评估病历描述的合理性。注意要结合临床实际情况，不要过于严格。"
                         },
                         {"role": "user", "content": prompt}
-                    ]
+                    ],
+                    response_format={"type": "json_object"}
                 )
 
                 if response.choices and response.choices[0].message and response.choices[0].message.content:

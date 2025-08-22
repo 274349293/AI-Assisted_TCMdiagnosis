@@ -1,6 +1,7 @@
 {
   "input_files": [
-    "../../data/case_data/0819+友杨.xlsx"
+    "../../data/case_data/0819+友杨.xlsx",
+    "../../data/case_data/0819+喜氏.xlsx"
   ],
   "门诊疾病目录": "../../data/other/disease_v2.json",
   "中医疾病-证型": "../../data/other/disease_to_syndromes_merged.completed.json",
