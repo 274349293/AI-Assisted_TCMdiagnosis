@@ -194,50 +194,68 @@ class ContentValidationPipeline:
             flattened_data = []
 
             for result in results:
-                # 基础信息区
+                # 原始信息列在前面
                 row = {
-                    '记录编号': result.get('记录编号', ''),
-                    '源文件': result.get('源文件', ''),
                     '姓名': result.get('原始数据', {}).get('姓名', ''),
                     '就诊日期': result.get('原始数据', {}).get('就诊日期', ''),
                 }
 
-                # Step1验证区（疾病名称验证）
+                # 添加原始病历字段
+                original_data = result.get('原始数据', {})
+                # 按重要性排序的字段
+                important_fields = ['诊断', '主诉', '现病史', 'PE/检查', 'PE/检查 （体现望闻问切）', '病机', '治则/处理']
+
+                # 先添加重要字段
+                for field in important_fields:
+                    if field in original_data:
+                        row[field] = original_data[field]
+
+                # 再添加其他原始字段
+                for key, value in original_data.items():
+                    if key not in important_fields and key not in ['姓名', '就诊日期']:
+                        row[key] = value
+
+                # 添加诊断分类信息
+                if '诊断分类' in result:
+                    classification = result['诊断分类']
+                    row.update({
+                        '分类_中医疾病': ', '.join(classification.get('中医疾病', [])),
+                        '分类_中医证型': ', '.join(classification.get('中医证型', [])),
+                        '分类_西医诊断': ', '.join(classification.get('西医诊断', [])),
+                        '分类_未匹配项': ', '.join(classification.get('未匹配项', [])),
+                    })
+
+                # 验证结果列放在最后
+                # Step1验证结果
                 if 'step1验证结果' in result:
                     step1_result = result['step1验证结果']
                     row.update({
-                        '疾病名称验证_是否符合要求': step1_result.get('是否符合要求', ''),
                         '疾病名称验证_不符合原因': step1_result.get('不符合原因', ''),
                     })
                 else:
                     row.update({
-                        '疾病名称验证_是否符合要求': '',
                         '疾病名称验证_不符合原因': '',
                     })
 
-                # Step2验证区
+                # Step2验证结果
                 if 'step2验证结果' in result:
                     step2_result = result['step2验证结果']
 
-                    # PE检查验证
+                    # PE检查验证结果
                     row.update({
-                        'PE检查合格': step2_result.get('PE检查是否合格', ''),
                         'PE检查原因': step2_result.get('PE检查不合格原因', ''),
                     })
 
-                    # 中医疾病验证汇总
+                    # 构建验证主要问题
                     tcm_validation = step2_result.get('中医疾病验证结果', {})
                     mapping_failures = step2_result.get('映射失败记录', [])
 
-                    # 构建验证汇总信息
-                    validation_summary = []
                     main_issues = []
 
                     # 处理映射失败
                     if mapping_failures:
                         failed_diseases = [item.get('原疾病', '') for item in mapping_failures]
-                        validation_summary.append(f"映射失败: {', '.join(failed_diseases)}")
-                        main_issues.append("存在疾病映射失败")
+                        main_issues.append(f"疾病映射失败: {', '.join(failed_diseases)}")
 
                     # 处理成功验证的疾病
                     for disease, validation in tcm_validation.items():
@@ -253,49 +271,15 @@ class ContentValidationPipeline:
                                 disease_issues.append(f"{field_name}({reason})")
 
                         if disease_issues:
-                            validation_summary.append(f"{disease}: {', '.join(disease_issues)}")
-                            main_issues.extend([f"{disease}_{issue}" for issue in disease_issues])
-                        else:
-                            validation_summary.append(f"{disease}: 验证通过")
-
-                    if not validation_summary:
-                        validation_summary = ["无中医疾病验证"]
+                            main_issues.append(f"{disease}: {', '.join(disease_issues)}")
 
                     row.update({
-                        '中医疾病验证汇总': '; '.join(validation_summary),
                         '验证主要问题': '; '.join(main_issues) if main_issues else '',
                     })
                 else:
                     row.update({
-                        'PE检查合格': '',
                         'PE检查原因': '',
-                        '中医疾病验证汇总': '',
                         '验证主要问题': '',
-                    })
-
-                # 原始病历区（保持原始字段名）
-                original_data = result.get('原始数据', {})
-                # 按重要性排序的字段
-                important_fields = ['诊断', '主诉', '现病史', 'PE/检查', 'PE/检查 （体现望闻问切）', '病机', '治则/处理']
-
-                # 先添加重要字段
-                for field in important_fields:
-                    if field in original_data:
-                        row[field] = original_data[field]
-
-                # 再添加其他字段
-                for key, value in original_data.items():
-                    if key not in important_fields and key not in ['姓名', '就诊日期']:
-                        row[key] = value
-
-                # 添加诊断分类信息（供参考）
-                if '诊断分类' in result:
-                    classification = result['诊断分类']
-                    row.update({
-                        '分类_中医疾病': ', '.join(classification.get('中医疾病', [])),
-                        '分类_中医证型': ', '.join(classification.get('中医证型', [])),
-                        '分类_西医诊断': ', '.join(classification.get('西医诊断', [])),
-                        '分类_未匹配项': ', '.join(classification.get('未匹配项', [])),
                     })
 
                 flattened_data.append(row)
