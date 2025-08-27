@@ -1,10 +1,11 @@
 {
   "input_files": [
-    "../../data/case_data/0825病历-友杨.xlsx"
+    "../../data/case_data/0826友杨病历.xlsx"
 
   ],
-  "门诊疾病目录": "../../data/other/disease_v2.json",
+  "门诊疾病目录": "../../data/other/disease_v2_dedup_2025-08-26.json",
   "中医疾病-证型": "../../data/other/disease_to_syndromes_merged.completed.json",
+  "证型层级映射": "../../data/other/syndromes_mapping.json",
   "output_dir": "../../data/result/",
   "treatment_validation_files": [
     "../../data/case_data/819-821-xs.xlsx",

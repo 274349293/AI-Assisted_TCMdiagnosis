@@ -1,7 +1,8 @@
 import pandas as pd
 import json
 import logging
-from typing import Dict, List, Tuple, Any
+import re
+from typing import Dict, List, Tuple, Any, Set
 import os
 
 # 配置日志
@@ -15,21 +16,24 @@ class Step1DiseaseValidator:
     验证门诊病历中的诊断内容是否符合要求
     """
 
-    def __init__(self, disease_catalog_path: str, disease_syndrome_path: str):
+    def __init__(self, disease_catalog_path: str, disease_syndrome_path: str, syndromes_mapping_path: str = None):
         """
         初始化验证器
 
         Args:
             disease_catalog_path: 门诊疾病目录JSON文件路径
             disease_syndrome_path: 中医疾病-证型对应关系JSON文件路径
+            syndromes_mapping_path: 证型层级映射JSON文件路径（可选）
         """
         self.disease_catalog = self._load_disease_catalog(disease_catalog_path)
         self.disease_syndrome_map = self._load_disease_syndrome_map(disease_syndrome_path)
+        self.syndromes_mapping = self._load_syndromes_mapping(syndromes_mapping_path)
 
         # 构建分类索引
         self.tcm_diseases = set()  # 中医疾病
         self.syndromes = set()  # 证型
         self.western_diagnoses = set()  # 西医诊断
+        self.tcm_western_common = set()  # 中西医同名疾病
 
         self._build_classification_index()
 
@@ -44,6 +48,64 @@ class Step1DiseaseValidator:
             logger.error(f"加载门诊疾病目录失败: {str(e)}")
             raise
 
+    def _load_syndromes_mapping(self, mapping_path: str = None) -> Dict:
+        """加载证型层级映射关系"""
+        if not mapping_path:
+            logger.info("未配置证型层级映射文件路径，跳过层级匹配功能")
+            return {}
+
+        try:
+            with open(mapping_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            mappings = data.get('mappings', [])
+            logger.info(f"成功加载证型层级映射: {len(mappings)} 条映射关系")
+            return data
+        except Exception as e:
+            logger.error(f"加载证型层级映射失败: {str(e)}")
+            logger.warning("将跳过层级匹配功能")
+            return {}
+
+    def _get_syndrome_descendants(self, target_syndrome: str) -> List[str]:
+        """
+        获取指定证型的所有下级证型（用于大类证型匹配）
+
+        Args:
+            target_syndrome: 目标证型名称
+
+        Returns:
+            下级证型名称列表
+        """
+        descendants = []
+        mappings = self.syndromes_mapping.get('mappings', [])
+
+        for mapping in mappings:
+            ancestors = mapping.get('ancestors', [])
+            source_name = mapping.get('source', {}).get('name', '')
+
+            if not source_name:
+                continue
+
+            # 检查target_syndrome是否在ancestors中（需要处理可选词）
+            for ancestor in ancestors:
+                ancestor_name = ancestor.get('name', '')
+                if not ancestor_name:
+                    continue
+
+                # 提取ancestor的所有可选词进行匹配
+                ancestor_names = self._extract_alternative_names(ancestor_name)
+                target_names = self._extract_alternative_names(target_syndrome)
+
+                # 如果有任何匹配，则source是target的下级证型
+                if any(target_name in ancestor_names for target_name in target_names):
+                    # 提取source的所有可选词
+                    source_names = self._extract_alternative_names(source_name)
+                    descendants.extend(source_names)
+                    break
+
+        # 去重并返回
+        return list(set(descendants))
+
     def _load_disease_syndrome_map(self, file_path: str) -> Dict:
         """加载中医疾病-证型对应关系"""
         try:
@@ -55,6 +117,125 @@ class Step1DiseaseValidator:
             logger.error(f"加载中医疾病-证型对应关系失败: {str(e)}")
             raise
 
+    def _get_syndrome_ancestors(self, source_syndrome: str) -> List[str]:
+        """
+        获取指定证型的所有上级证型（用于小类证型匹配）
+
+        Args:
+            source_syndrome: 源证型名称
+
+        Returns:
+            上级证型名称列表
+        """
+        ancestors = []
+        mappings = self.syndromes_mapping.get('mappings', [])
+
+        for mapping in mappings:
+            source_name = mapping.get('source', {}).get('name', '')
+            if not source_name:
+                continue
+
+            # 提取source的所有可选词进行匹配
+            source_names = self._extract_alternative_names(source_name)
+            target_names = self._extract_alternative_names(source_syndrome)
+
+            # 如果source匹配target，获取其ancestors
+            if any(target_name in source_names for target_name in target_names):
+                mapping_ancestors = mapping.get('ancestors', [])
+                for ancestor in mapping_ancestors:
+                    ancestor_name = ancestor.get('name', '')
+                    if ancestor_name:
+                        # 提取ancestor的所有可选词
+                        ancestor_names = self._extract_alternative_names(ancestor_name)
+                        ancestors.extend(ancestor_names)
+                break
+
+        # 去重并返回
+        return list(set(ancestors))
+        """
+        获取指定证型的所有上级证型（用于小类证型匹配）
+
+        Args:
+            source_syndrome: 源证型名称
+
+        Returns:
+            上级证型名称列表
+        """
+        ancestors = []
+        mappings = self.syndromes_mapping.get('mappings', [])
+
+        for mapping in mappings:
+            source_name = mapping.get('source', {}).get('name', '')
+            if not source_name:
+                continue
+
+            # 提取source的所有可选词进行匹配
+            source_names = self._extract_alternative_names(source_name)
+            target_names = self._extract_alternative_names(source_syndrome)
+
+            # 如果source匹配target，获取其ancestors
+            if any(target_name in source_names for target_name in target_names):
+                mapping_ancestors = mapping.get('ancestors', [])
+                for ancestor in mapping_ancestors:
+                    ancestor_name = ancestor.get('name', '')
+                    if ancestor_name:
+                        # 提取ancestor的所有可选词
+                        ancestor_names = self._extract_alternative_names(ancestor_name)
+                        ancestors.extend(ancestor_names)
+                break
+
+        # 去重并返回
+        return list(set(ancestors))
+        """加载中医疾病-证型对应关系"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            logger.info(f"成功加载中医疾病-证型对应关系: {len(data)} 个疾病")
+            return data
+        except Exception as e:
+            logger.error(f"加载中医疾病-证型对应关系失败: {str(e)}")
+            raise
+
+    def _extract_alternative_names(self, disease_name: str) -> List[str]:
+        """
+        从疾病名中提取可选词
+
+        例如：流痰(可选词：骨痨；穿骨流注) -> ["流痰(可选词：骨痨；穿骨流注)", "流痰", "骨痨", "穿骨流注"]
+
+        Args:
+            disease_name: 原始疾病名称
+
+        Returns:
+            包含原始名称、基础名称和所有可选词的列表
+        """
+        names = [disease_name]  # 保留原始名称
+
+        # 匹配括号内的可选词模式
+        pattern = r'\(可选词：([^)]+)\)'
+        match = re.search(pattern, disease_name)
+
+        if match:
+            # 提取去括号的基础名称
+            base_name = re.sub(r'\(可选词：[^)]+\)', '', disease_name).strip()
+            if base_name and base_name not in names:
+                names.append(base_name)
+
+            # 提取括号内的内容
+            alternatives_text = match.group(1)
+
+            # 按分号或中文分号分割
+            alternatives = re.split('[;；]', alternatives_text)
+
+            # 清理空白字符并添加到列表
+            for alt in alternatives:
+                alt = alt.strip()
+                if alt and alt not in names:
+                    names.append(alt)
+
+            logger.debug(f"提取可选词: {disease_name} -> {names}")
+
+        return names
+
     def _build_classification_index(self):
         """构建分类索引"""
         items = self.disease_catalog.get('items', [])
@@ -63,17 +244,30 @@ class Step1DiseaseValidator:
             name = item.get('name', '')
             item_type = item.get('type', '')
 
+            if not name:
+                continue
+
             if item_type == '中医疾病':
                 self.tcm_diseases.add(name)
+
             elif item_type == '证候':
                 self.syndromes.add(name)
+
             elif item_type == '西医诊断':
                 self.western_diagnoses.add(name)
+
+            elif item_type == '中西医同名疾病':
+                # 中西医同名疾病同时加入中医疾病和西医诊断
+                self.tcm_diseases.add(name)
+                self.western_diagnoses.add(name)
+                self.tcm_western_common.add(name)
+                logger.debug(f"中西医同名疾病: {name}")
 
         logger.info(f"分类索引构建完成:")
         logger.info(f"  中医疾病: {len(self.tcm_diseases)} 个")
         logger.info(f"  证候: {len(self.syndromes)} 个")
         logger.info(f"  西医诊断: {len(self.western_diagnoses)} 个")
+        logger.info(f"  中西医同名疾病: {len(self.tcm_western_common)} 个")
 
     def classify_diagnosis_items(self, diagnosis_text: str) -> Dict[str, List[str]]:
         """
@@ -104,20 +298,51 @@ class Step1DiseaseValidator:
         }
 
         for item in items:
+            matched = False
+
+            # 检查是否为中医疾病（包括中西医同名疾病）
             if item in self.tcm_diseases:
                 classification["中医疾病"].append(item)
-            elif item in self.syndromes:
+                matched = True
+
+            # 检查是否为证型
+            if item in self.syndromes:
                 classification["中医证型"].append(item)
-            elif item in self.western_diagnoses:
+                matched = True
+
+            # 检查是否为西医诊断（包括中西医同名疾病）
+            if item in self.western_diagnoses:
                 classification["西医诊断"].append(item)
-            else:
+                matched = True
+
+            # 如果都没有匹配到，则为未匹配项
+            if not matched:
                 classification["未匹配项"].append(item)
+
+        # 记录中西医同名疾病的日志
+        for item in items:
+            if item in self.tcm_western_common:
+                logger.debug(f"识别到中西医同名疾病: {item}")
+
+        # 新增：后处理拆分可选词
+        for category in ["中医疾病", "中医证型"]:
+            expanded_items = []
+            for item in classification[category]:
+                expanded_items.append(item)  # 保留原始名称
+                # 提取并添加可选词
+                alternative_names = self._extract_alternative_names(item)
+                for alt_name in alternative_names[1:]:  # 跳过第一个（原始名称）
+                    if alt_name not in expanded_items:
+                        expanded_items.append(alt_name)
+                        logger.debug(f"从 '{item}' 中提取可选词: '{alt_name}'")
+            classification[category] = expanded_items
 
         return classification
 
     def validate_tcm_disease_syndrome_match(self, tcm_diseases: List[str], syndromes: List[str]) -> Tuple[bool, str]:
         """
         验证中医疾病与证型的匹配关系
+        支持双向层级匹配：大类证型匹配下级证型，小类证型匹配上级证型
 
         Args:
             tcm_diseases: 中医疾病列表
@@ -130,24 +355,88 @@ class Step1DiseaseValidator:
             return True, "无需验证中医疾病-证型匹配关系"
 
         unmatched_pairs = []
+        match_details = []
+
+        # 构建原始疾病名到匹配用名称的映射
+        original_disease_map = {}
+        for original_name in self.disease_syndrome_map.keys():
+            alternative_names = self._extract_alternative_names(original_name)
+            for alt_name in alternative_names:
+                original_disease_map[alt_name] = original_name
 
         for tcm_disease in tcm_diseases:
+            # 找到对应的原始疾病名（用于在映射表中查找）
+            original_disease_name = original_disease_map.get(tcm_disease, tcm_disease)
+
             # 查找该疾病对应的证型
-            disease_syndromes = self.disease_syndrome_map.get(tcm_disease, [])
+            disease_syndromes = self.disease_syndrome_map.get(original_disease_name, [])
 
             if not disease_syndromes:
                 # 疾病-证型映射中没有该疾病，跳过验证
+                logger.debug(f"疾病-证型映射中未找到: {tcm_disease} (原始名: {original_disease_name})")
                 continue
 
-            # 检查每个证型是否属于该疾病
+            # 展开疾病支持的证型（处理可选词）
+            expanded_disease_syndromes = set()
+            for syndrome in disease_syndromes:
+                syndrome_alternatives = self._extract_alternative_names(syndrome)
+                expanded_disease_syndromes.update(syndrome_alternatives)
+
+            # 检查每个证型是否匹配
             for syndrome in syndromes:
-                if syndrome not in disease_syndromes:
+                syndrome_matched = False
+                match_type = ""
+
+                # 展开病历证型（处理可选词）
+                syndrome_alternatives = self._extract_alternative_names(syndrome)
+
+                # 第一层：直接匹配
+                for syndrome_alt in syndrome_alternatives:
+                    if syndrome_alt in expanded_disease_syndromes:
+                        syndrome_matched = True
+                        match_type = "直接匹配"
+                        match_details.append(f"{tcm_disease} ↔ {syndrome} (直接匹配: {syndrome_alt})")
+                        logger.debug(f"直接匹配成功: {tcm_disease} ↔ {syndrome} ({syndrome_alt})")
+                        break
+
+                # 第二层：层级匹配（如果直接匹配失败）
+                if not syndrome_matched and self.syndromes_mapping:
+                    # 情况1：病历证型是大类，查找其下级证型
+                    descendants = self._get_syndrome_descendants(syndrome)
+                    if descendants:
+                        for descendant in descendants:
+                            if descendant in expanded_disease_syndromes:
+                                syndrome_matched = True
+                                match_type = "大类证型匹配"
+                                match_details.append(
+                                    f"{tcm_disease} ↔ {syndrome} (大类匹配: 通过下级证型'{descendant}')")
+                                logger.info(
+                                    f"大类证型匹配成功: {tcm_disease} ↔ {syndrome} (通过下级证型'{descendant}')")
+                                break
+
+                    # 情况2：病历证型是小类，查找其上级证型
+                    if not syndrome_matched:
+                        ancestors = self._get_syndrome_ancestors(syndrome)
+                        if ancestors:
+                            for ancestor in ancestors:
+                                if ancestor in expanded_disease_syndromes:
+                                    syndrome_matched = True
+                                    match_type = "小类证型匹配"
+                                    match_details.append(
+                                        f"{tcm_disease} ↔ {syndrome} (小类匹配: 通过上级证型'{ancestor}')")
+                                    logger.info(
+                                        f"小类证型匹配成功: {tcm_disease} ↔ {syndrome} (通过上级证型'{ancestor}')")
+                                    break
+
+                # 如果所有匹配都失败
+                if not syndrome_matched:
                     unmatched_pairs.append(f"{tcm_disease}与{syndrome}")
 
         if unmatched_pairs:
             return False, f"中医疾病与证型不匹配: {', '.join(unmatched_pairs)}"
         else:
-            return True, "中医疾病与证型匹配正确"
+            details_str = "; ".join(match_details) if match_details else "匹配正确"
+            return True, f"中医疾病与证型匹配正确 - {details_str}"
 
     def validate_single_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -322,7 +611,8 @@ def run_step1_validation(config_path: str) -> List[Dict[str, Any]]:
     # 创建验证器
     validator = Step1DiseaseValidator(
         disease_catalog_path=config["门诊疾病目录"],
-        disease_syndrome_path=config["中医疾病-证型"]
+        disease_syndrome_path=config["中医疾病-证型"],
+        syndromes_mapping_path=config.get("证型层级映射", None)  # 可选配置
     )
 
     # 执行验证
