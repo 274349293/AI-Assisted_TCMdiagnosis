@@ -48,6 +48,17 @@ class Step1DiseaseValidator:
             logger.error(f"加载门诊疾病目录失败: {str(e)}")
             raise
 
+    def _load_disease_syndrome_map(self, file_path: str) -> Dict:
+        """加载中医疾病-证型对应关系"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            logger.info(f"成功加载中医疾病-证型对应关系: {len(data)} 个疾病")
+            return data
+        except Exception as e:
+            logger.error(f"加载中医疾病-证型对应关系失败: {str(e)}")
+            raise
+
     def _load_syndromes_mapping(self, mapping_path: str = None) -> Dict:
         """加载证型层级映射关系"""
         if not mapping_path:
@@ -65,6 +76,46 @@ class Step1DiseaseValidator:
             logger.error(f"加载证型层级映射失败: {str(e)}")
             logger.warning("将跳过层级匹配功能")
             return {}
+
+    def _extract_alternative_names(self, disease_name: str) -> List[str]:
+        """
+        从疾病名中提取可选词
+
+        例如：流痰(可选词：骨痨；穿骨流注) -> ["流痰(可选词：骨痨；穿骨流注)", "流痰", "骨痨", "穿骨流注"]
+
+        Args:
+            disease_name: 原始疾病名称
+
+        Returns:
+            包含原始名称、基础名称和所有可选词的列表
+        """
+        names = [disease_name]  # 保留原始名称
+
+        # 匹配括号内的可选词模式
+        pattern = r'\(可选词：([^)]+)\)'
+        match = re.search(pattern, disease_name)
+
+        if match:
+            # 提取去括号的基础名称
+            base_name = re.sub(r'\(可选词：[^)]+\)', '', disease_name).strip()
+            if base_name and base_name not in names:
+                names.append(base_name)
+
+            # 提取括号内的内容
+            alternatives_text = match.group(1)
+
+            # 按分号或中文分号分割
+            alternatives = re.split('[;；]', alternatives_text)
+
+            # 清理空白字符并添加到列表
+            for alt in alternatives:
+                alt = alt.strip()
+                if alt and alt not in names:
+                    names.append(alt)
+
+            logger.debug(f"提取可选词: {disease_name} -> {names}")
+
+        return names
 
     def _get_syndrome_descendants(self, target_syndrome: str) -> List[str]:
         """
@@ -106,17 +157,6 @@ class Step1DiseaseValidator:
         # 去重并返回
         return list(set(descendants))
 
-    def _load_disease_syndrome_map(self, file_path: str) -> Dict:
-        """加载中医疾病-证型对应关系"""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            logger.info(f"成功加载中医疾病-证型对应关系: {len(data)} 个疾病")
-            return data
-        except Exception as e:
-            logger.error(f"加载中医疾病-证型对应关系失败: {str(e)}")
-            raise
-
     def _get_syndrome_ancestors(self, source_syndrome: str) -> List[str]:
         """
         获取指定证型的所有上级证型（用于小类证型匹配）
@@ -152,89 +192,6 @@ class Step1DiseaseValidator:
 
         # 去重并返回
         return list(set(ancestors))
-        """
-        获取指定证型的所有上级证型（用于小类证型匹配）
-
-        Args:
-            source_syndrome: 源证型名称
-
-        Returns:
-            上级证型名称列表
-        """
-        ancestors = []
-        mappings = self.syndromes_mapping.get('mappings', [])
-
-        for mapping in mappings:
-            source_name = mapping.get('source', {}).get('name', '')
-            if not source_name:
-                continue
-
-            # 提取source的所有可选词进行匹配
-            source_names = self._extract_alternative_names(source_name)
-            target_names = self._extract_alternative_names(source_syndrome)
-
-            # 如果source匹配target，获取其ancestors
-            if any(target_name in source_names for target_name in target_names):
-                mapping_ancestors = mapping.get('ancestors', [])
-                for ancestor in mapping_ancestors:
-                    ancestor_name = ancestor.get('name', '')
-                    if ancestor_name:
-                        # 提取ancestor的所有可选词
-                        ancestor_names = self._extract_alternative_names(ancestor_name)
-                        ancestors.extend(ancestor_names)
-                break
-
-        # 去重并返回
-        return list(set(ancestors))
-        """加载中医疾病-证型对应关系"""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            logger.info(f"成功加载中医疾病-证型对应关系: {len(data)} 个疾病")
-            return data
-        except Exception as e:
-            logger.error(f"加载中医疾病-证型对应关系失败: {str(e)}")
-            raise
-
-    def _extract_alternative_names(self, disease_name: str) -> List[str]:
-        """
-        从疾病名中提取可选词
-
-        例如：流痰(可选词：骨痨；穿骨流注) -> ["流痰(可选词：骨痨；穿骨流注)", "流痰", "骨痨", "穿骨流注"]
-
-        Args:
-            disease_name: 原始疾病名称
-
-        Returns:
-            包含原始名称、基础名称和所有可选词的列表
-        """
-        names = [disease_name]  # 保留原始名称
-
-        # 匹配括号内的可选词模式
-        pattern = r'\(可选词：([^)]+)\)'
-        match = re.search(pattern, disease_name)
-
-        if match:
-            # 提取去括号的基础名称
-            base_name = re.sub(r'\(可选词：[^)]+\)', '', disease_name).strip()
-            if base_name and base_name not in names:
-                names.append(base_name)
-
-            # 提取括号内的内容
-            alternatives_text = match.group(1)
-
-            # 按分号或中文分号分割
-            alternatives = re.split('[;；]', alternatives_text)
-
-            # 清理空白字符并添加到列表
-            for alt in alternatives:
-                alt = alt.strip()
-                if alt and alt not in names:
-                    names.append(alt)
-
-            logger.debug(f"提取可选词: {disease_name} -> {names}")
-
-        return names
 
     def _build_classification_index(self):
         """构建分类索引"""
@@ -580,16 +537,19 @@ class Step1DiseaseValidator:
 
         # 总体统计
         total_records = len(all_results)
-        passed_records = len([r for r in all_results if r["step1验证结果"]["是否符合要求"]])
-        failed_records = total_records - passed_records
+        if total_records > 0:
+            passed_records = len([r for r in all_results if r["step1验证结果"]["是否符合要求"]])
+            failed_records = total_records - passed_records
 
-        logger.info("=" * 60)
-        logger.info("Step1验证总体统计:")
-        logger.info(f"  处理文件数: {len(file_paths)}")
-        logger.info(f"  总记录数: {total_records}")
-        logger.info(f"  通过验证: {passed_records} ({passed_records / total_records * 100:.1f}%)")
-        logger.info(f"  未通过验证: {failed_records} ({failed_records / total_records * 100:.1f}%)")
-        logger.info("=" * 60)
+            logger.info("=" * 60)
+            logger.info("Step1验证总体统计:")
+            logger.info(f"  处理文件数: {len(file_paths)}")
+            logger.info(f"  总记录数: {total_records}")
+            logger.info(f"  通过验证: {passed_records} ({passed_records / total_records * 100:.1f}%)")
+            logger.info(f"  未通过验证: {failed_records} ({failed_records / total_records * 100:.1f}%)")
+            logger.info("=" * 60)
+        else:
+            logger.warning("没有成功处理任何记录")
 
         return all_results
 
