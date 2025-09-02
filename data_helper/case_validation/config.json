@@ -1,6 +1,6 @@
 {
   "input_files": [
-    "../../data/case_data/0829-0831喜氏-病历.xlsx"
+    "../../data/case_data/0901-喜氏病历.xlsx"
 
   ],
   "门诊疾病目录": "../../data/other/disease_v2_dedup_2025-08-26.json",

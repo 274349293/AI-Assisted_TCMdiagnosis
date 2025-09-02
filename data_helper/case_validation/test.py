@@ -277,13 +277,19 @@ class Step2LLMValidator:
         if not mapped_diseases:
             return {}
 
-        # 提取病历中的相关字段
-        patient_info = {
-            '主诉': record_data.get('主诉', ''),
-            '现病史': record_data.get('现病史', ''),
-            '病机': record_data.get('病机', ''),
-            '治则/处理': record_data.get('治则/处理', '')
-        }
+        # 提取病历中的相关字段 - 添加类型检查
+        patient_info = {}
+        for field_name in self.validation_fields:
+            field_value = record_data.get(field_name, '')
+            # 确保字段值是字符串类型
+            if isinstance(field_value, list):
+                logger.warning(f"字段 {field_name} 是列表类型，将转换为字符串: {field_value}")
+                field_value = ', '.join(str(item) for item in field_value if item is not None)
+            elif field_value is None:
+                field_value = ''
+            else:
+                field_value = str(field_value)
+            patient_info[field_name] = field_value
 
         # 检查空字段
         validation_results = {}
@@ -304,7 +310,19 @@ class Step2LLMValidator:
             return validation_results
 
         # 提取知识库信息（限制长度以避免token超限）
-        knowledge_content = self.extract_disease_knowledge(mapped_diseases)
+        try:
+            knowledge_content = self.extract_disease_knowledge(mapped_diseases)
+        except Exception as e:
+            logger.error(f"提取知识库信息时出错: {str(e)}")
+            # 如果知识库提取失败，返回验证失败结果
+            for field_name in self.validation_fields:
+                field_key = f"{field_name}验证"
+                if field_key not in validation_results:
+                    validation_results[field_key] = {
+                        "结果": "验证失败",
+                        "原因": f"知识库提取失败: {str(e)}"
+                    }
+            return validation_results
 
         # 如果知识库内容过长，进行截断
         if len(knowledge_content) > 8000:  # 大约4000个token
@@ -312,7 +330,7 @@ class Step2LLMValidator:
             logger.debug("知识库内容过长，已截断")
 
         # 构建LLM提示词
-        diseases_str = '、'.join(mapped_diseases)
+        diseases_str = '、'.join(str(disease) for disease in mapped_diseases)  # 确保转换为字符串
         patient_info_str = []
 
         for field_name in self.validation_fields:
@@ -401,100 +419,100 @@ class Step2LLMValidator:
         Returns:
             添加了step2验证结果的记录
         """
-        try:
-            original_data = record.get('原始数据', {})
-            diagnosis_classification = record.get('诊断分类', {})
+        # try:
+        original_data = record.get('原始数据', {})
+        diagnosis_classification = record.get('诊断分类', {})
 
-            # Step2验证结果初始化
-            step2_result = {
-                "PE检查是否合格": True,
-                "PE检查不合格原因": "",
-                "中医疾病验证结果": {},
-                "映射失败记录": []
-            }
+        # Step2验证结果初始化
+        step2_result = {
+            "PE检查是否合格": True,
+            "PE检查不合格原因": "",
+            "中医疾病验证结果": {},
+            "映射失败记录": []
+        }
 
-            # 1. 验证PE/检查字段
-            pe_content = original_data.get('PE/检查', '') or original_data.get('PE/检查 （体现望闻问切）', '')
-            pe_valid, pe_reason = self.validate_pe_examination(pe_content)
-            step2_result["PE检查是否合格"] = pe_valid
-            step2_result["PE检查不合格原因"] = pe_reason
+        # 1. 验证PE/检查字段
+        pe_content = original_data.get('PE/检查', '') or original_data.get('PE/检查 （体现望闻问切）', '')
+        pe_valid, pe_reason = self.validate_pe_examination(pe_content)
+        step2_result["PE检查是否合格"] = pe_valid
+        step2_result["PE检查不合格原因"] = pe_reason
 
-            # 2. 验证中医疾病相关字段
-            tcm_diseases_raw = diagnosis_classification.get('中医疾病', [])
+        # 2. 验证中医疾病相关字段
+        tcm_diseases_raw = diagnosis_classification.get('中医疾病', [])
 
-            # 修复：确保tcm_diseases是字符串列表
-            tcm_diseases = []
-            if isinstance(tcm_diseases_raw, list):
-                for item in tcm_diseases_raw:
-                    if isinstance(item, str):
-                        tcm_diseases.append(item)
-                    elif item is not None:
-                        tcm_diseases.append(str(item))
-                        logger.warning(f"中医疾病项不是字符串，已转换: {item} -> {str(item)}")
-            elif tcm_diseases_raw:
-                # 如果不是列表，尝试转换
-                if isinstance(tcm_diseases_raw, str):
-                    tcm_diseases = [tcm_diseases_raw]
-                else:
-                    tcm_diseases = [str(tcm_diseases_raw)]
-                    logger.warning(f"中医疾病数据类型异常，已转换: {tcm_diseases_raw}")
+        # 修复：确保tcm_diseases是字符串列表
+        tcm_diseases = []
+        if isinstance(tcm_diseases_raw, list):
+            for item in tcm_diseases_raw:
+                if isinstance(item, str):
+                    tcm_diseases.append(item)
+                elif item is not None:
+                    tcm_diseases.append(str(item))
+                    logger.warning(f"中医疾病项不是字符串，已转换: {item} -> {str(item)}")
+        elif tcm_diseases_raw:
+            # 如果不是列表，尝试转换
+            if isinstance(tcm_diseases_raw, str):
+                tcm_diseases = [tcm_diseases_raw]
+            else:
+                tcm_diseases = [str(tcm_diseases_raw)]
+                logger.warning(f"中医疾病数据类型异常，已转换: {tcm_diseases_raw}")
 
-            logger.debug(f"处理后的中医疾病列表: {tcm_diseases}")
+        logger.debug(f"处理后的中医疾病列表: {tcm_diseases}")
 
-            if tcm_diseases:
-                # 映射疾病名
-                mapped_diseases, failed_mappings = self.map_disease_to_knowledge(tcm_diseases)
-                step2_result["映射失败记录"] = failed_mappings
+        if tcm_diseases:
+            # 映射疾病名
+            mapped_diseases, failed_mappings = self.map_disease_to_knowledge(tcm_diseases)
+            step2_result["映射失败记录"] = failed_mappings
 
-                # 对成功映射的疾病进行LLM验证
-                if mapped_diseases:
-                    try:
-                        validation_results = self.validate_tcm_diseases_with_llm(original_data, mapped_diseases)
+            # 对成功映射的疾病进行LLM验证
+            if mapped_diseases:
+                try:
+                    validation_results = self.validate_tcm_diseases_with_llm(original_data, mapped_diseases)
 
-                        # 构建结果格式
-                        tcm_validation = {}
-                        for original_disease in tcm_diseases:
-                            mapped_disease = self.disease_mapping.get(original_disease, original_disease)
-                            if mapped_disease in mapped_diseases:
-                                mapping_status = f"成功映射为: {mapped_disease}" if original_disease != mapped_disease else "直接匹配"
-                                tcm_validation[original_disease] = {
-                                    "映射状态": mapping_status,
-                                    **validation_results
-                                }
-
-                        step2_result["中医疾病验证结果"] = tcm_validation
-
-                    except Exception as e:
-                        logger.error(f"中医疾病验证过程出错: {str(e)}")
-                        # 为每个原始疾病添加验证失败记录
-                        tcm_validation = {}
-                        for original_disease in tcm_diseases:
+                    # 构建结果格式
+                    tcm_validation = {}
+                    for original_disease in tcm_diseases:
+                        mapped_disease = self.disease_mapping.get(original_disease, original_disease)
+                        if mapped_disease in mapped_diseases:
+                            mapping_status = f"成功映射为: {mapped_disease}" if original_disease != mapped_disease else "直接匹配"
                             tcm_validation[original_disease] = {
-                                "映射状态": "验证过程出错",
-                                "主诉验证": {"结果": "验证失败", "原因": f"系统错误: {str(e)}"},
-                                "现病史验证": {"结果": "验证失败", "原因": f"系统错误: {str(e)}"},
-                                "病机验证": {"结果": "验证失败", "原因": f"系统错误: {str(e)}"},
-                                "治则/处理验证": {"结果": "验证失败", "原因": f"系统错误: {str(e)}"}
+                                "映射状态": mapping_status,
+                                **validation_results
                             }
-                        step2_result["中医疾病验证结果"] = tcm_validation
 
-            # 添加step2结果到原记录
-            record['step2验证结果'] = step2_result
-            return record
+                    step2_result["中医疾病验证结果"] = tcm_validation
 
-        except Exception as e:
-            logger.error(f"验证单条记录时出错: {str(e)}")
-            logger.error(f"问题记录的诊断分类数据: {record.get('诊断分类', {})}")
+                except Exception as e:
+                    logger.error(f"中医疾病验证过程出错: {str(e)}")
+                    # 为每个原始疾病添加验证失败记录
+                    tcm_validation = {}
+                    for original_disease in tcm_diseases:
+                        tcm_validation[original_disease] = {
+                            "映射状态": "验证过程出错",
+                            "主诉验证": {"结果": "验证失败", "原因": f"系统错误: {str(e)}"},
+                            "现病史验证": {"结果": "验证失败", "原因": f"系统错误: {str(e)}"},
+                            "病机验证": {"结果": "验证失败", "原因": f"系统错误: {str(e)}"},
+                            "治则/处理验证": {"结果": "验证失败", "原因": f"系统错误: {str(e)}"}
+                        }
+                    step2_result["中医疾病验证结果"] = tcm_validation
 
-            # 返回带错误信息的记录
-            record['step2验证结果'] = {
-                "PE检查是否合格": False,
-                "PE检查不合格原因": f"记录处理错误: {str(e)}",
-                "中医疾病验证结果": {},
-                "映射失败记录": [],
-                "系统错误": str(e)
-            }
-            return record
+        # 添加step2结果到原记录
+        record['step2验证结果'] = step2_result
+        return record
+
+        # except Exception as e:
+        #     logger.error(f"验证单条记录时出错: {str(e)}")
+        #     logger.error(f"问题记录的诊断分类数据: {record.get('诊断分类', {})}")
+        #
+        #     # 返回带错误信息的记录
+        #     record['step2验证结果'] = {
+        #         "PE检查是否合格": False,
+        #         "PE检查不合格原因": f"记录处理错误: {str(e)}",
+        #         "中医疾病验证结果": {},
+        #         "映射失败记录": [],
+        #         "系统错误": str(e)
+        #     }
+        #     return record
 
     def validate_step1_results(self, step1_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -511,27 +529,46 @@ class Step2LLMValidator:
         results = []
 
         for i, record in enumerate(step1_results, 1):
-            try:
-                logger.info(f"验证进度: {i}/{len(step1_results)} - 记录编号: {record.get('记录编号', i)}")
 
-                validated_record = self.validate_single_record(record)
-                results.append(validated_record)
+            # 检查是否是目标记录（刘蓓蓓）
+            original_data = record.get('原始数据', {})
+            patient_name = original_data.get('姓名', '')
 
-                # 避免API调用过快
-                if i % 5 == 0:
-                    time.sleep(1)
-
-            except Exception as e:
-                logger.error(f"验证记录 {i} 时出错: {str(e)}")
-                # 添加验证失败的记录
+            if patient_name != '刘蓓蓓':
+                # 跳过非目标记录，直接添加一个简单的step2结果
                 record['step2验证结果'] = {
-                    "PE检查是否合格": False,
-                    "PE检查不合格原因": f"验证过程出错: {str(e)}",
+                    "PE检查是否合格": True,
+                    "PE检查不合格原因": "跳过验证（非目标记录）",
                     "中医疾病验证结果": {},
-                    "映射失败记录": [],
-                    "系统错误": str(e)
+                    "映射失败记录": []
                 }
                 results.append(record)
+                logger.info(f"跳过记录 {i}/{len(step1_results)} - 姓名: {patient_name}")
+                continue
+
+            # 只处理刘蓓蓓的记录
+            logger.info(f"🎯 处理目标记录: {i}/{len(step1_results)} - 姓名: {patient_name}")
+            logger.info(f"原始数据内容: {original_data}")
+            logger.info(f"诊断分类内容: {record.get('诊断分类', {})}")
+
+            validated_record = self.validate_single_record(record)
+            results.append(validated_record)
+
+            # 避免API调用过快
+            if i % 5 == 0:
+                time.sleep(1)
+
+            # except Exception as e:
+            #     logger.error(f"验证记录 {i} 时出错: {str(e)}")
+            #     # 添加验证失败的记录
+            #     record['step2验证结果'] = {
+            #         "PE检查是否合格": False,
+            #         "PE检查不合格原因": f"验证过程出错: {str(e)}",
+            #         "中医疾病验证结果": {},
+            #         "映射失败记录": [],
+            #         "系统错误": str(e)
+            #     }
+            #     results.append(record)
 
         # 统计结果
         pe_pass_count = len([r for r in results if r.get('step2验证结果', {}).get('PE检查是否合格', False)])
@@ -614,22 +651,22 @@ if __name__ == "__main__":
     # 独立运行时的测试代码
     config_file = "config.json"
 
-    try:
-        with open(config_file, 'r', encoding='utf-8') as f:
-            config = json.load(f)
+    # try:
+    with open(config_file, 'r', encoding='utf-8') as f:
+        config = json.load(f)
 
-        results = run_step2_validation(config)
+    results = run_step2_validation(config)
 
-        logger.info(f"Step2验证完成，共处理 {len(results)} 条记录")
+    logger.info(f"Step2验证完成，共处理 {len(results)} 条记录")
 
-        # 保存测试结果
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        test_output = f"step2_test_results_{timestamp}.json"
+    # # 保存测试结果
+    # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # test_output = f"step2_test_results_{timestamp}.json"
+    #
+    # with open(test_output, 'w', encoding='utf-8') as f:
+    #     json.dump(results, f, ensure_ascii=False, indent=2)
+    #
+    # logger.info(f"测试结果已保存: {test_output}")
 
-        with open(test_output, 'w', encoding='utf-8') as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
-
-        logger.info(f"测试结果已保存: {test_output}")
-
-    except Exception as e:
-        logger.error(f"Step2验证执行失败: {str(e)}")
+    # except Exception as e:
+    #     logger.error(f"Step2验证执行失败: {str(e)}")
