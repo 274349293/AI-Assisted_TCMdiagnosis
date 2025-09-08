@@ -263,9 +263,9 @@ def save_error_log(processing_errors, error_log_file):
 
 def main():
     """主函数"""
-    input_file = '../../data/case_data/0828-0901-喜氏治疗.xlsx'  # 输入文件路径
-    output_file = '../../data/result/treatment_validation_results_0828-0901-喜氏治疗.xlsx'  # 问题记录输出文件
-    error_log_file = '../../data/result/treatment_validation_results_0828-0901-喜氏治疗.log'  # 异常日志输出文件
+    input_file = '../../data/case_data/0903-0907喜氏治疗.xlsx'  # 输入文件路径
+    output_file = '../../data/result/treatment_validation_results_0903-0907喜氏治疗.xlsx'  # 问题记录输出文件
+    error_log_file = '../../data/result/treatment_validation_results_0903-0907喜氏治疗.xlsx'  # 异常日志输出文件
 
     try:
         # 读取数据
